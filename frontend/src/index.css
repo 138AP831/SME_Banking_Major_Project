@@ -1,0 +1,46 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Instrument Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --color-navy: #003049;
+  --color-navy-2: #0a3d5c;
+  --color-navy-3: #14506f;
+  --color-teal: #0a9396;
+  --color-teal-dark: #087679;
+  --color-teal-soft: #d6eeee;
+  --color-sand: #e9c46a;
+  --color-sand-soft: #f7ebc8;
+  --color-ivory: #f4f1de;
+  --color-ivory-2: #ebe7cf;
+  --color-paper: #fcfbf4;
+  --color-slate: #1d3557;
+  --color-ink: #243447;
+  --color-muted: #667a8c;
+  --color-line: #ddd9c0;
+  /* functional risk tokens (not part of the brand palette: needed so "high risk" never reads as "fine") */
+  --color-risk: #b23a48;
+  --color-risk-soft: #f6dcdf;
+  --color-warn: #c7791a;
+  --color-warn-soft: #f9e7cd;
+  --radius-card: 14px;
+}
+
+:root { color-scheme: light; }
+html, body, #root { height: 100%; }
+body { background: var(--color-ivory); color: var(--color-ink); font-family: var(--font-sans); font-feature-settings: "ss01", "tnum"; -webkit-font-smoothing: antialiased; }
+h1, h2, h3, h4 { color: var(--color-slate); letter-spacing: -0.01em; }
+:focus-visible { outline: 2px solid var(--color-teal); outline-offset: 2px; border-radius: 6px; }
+::selection { background: var(--color-sand-soft); }
+.num { font-variant-numeric: tabular-nums; }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; } }
+
+/* React Flow tuning */
+.react-flow__attribution { display: none; }
+.react-flow__edge-path { stroke: #9fb3c0; stroke-width: 1.6; }
+.react-flow__edge.done .react-flow__edge-path { stroke: var(--color-teal); stroke-width: 2.2; }
+.react-flow__edge.active .react-flow__edge-path { stroke: var(--color-teal); stroke-width: 2.4; stroke-dasharray: 6 5; animation: dash 0.8s linear infinite; }
+@keyframes dash { to { stroke-dashoffset: -22; } }
+@keyframes pulse-ring { 0% { box-shadow: 0 0 0 0 rgba(10,147,150,.45); } 100% { box-shadow: 0 0 0 12px rgba(10,147,150,0); } }
+.pulse { animation: pulse-ring 1.3s ease-out infinite; }
+@keyframes pulse-sand { 0% { box-shadow: 0 0 0 0 rgba(233,196,106,.7); } 100% { box-shadow: 0 0 0 12px rgba(233,196,106,0); } }
+.pulse-sand { animation: pulse-sand 1.6s ease-out infinite; }
