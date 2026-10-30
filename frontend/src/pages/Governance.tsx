@@ -14,6 +14,7 @@ export default function Governance() {
   const [open, setOpen] = useState<J | null>(null);
   const qs = new URLSearchParams({ ...(category && { category }), ...(severity && { severity }), ...(ai && { ai_only: "true" }), ...(text && { q: text }), limit: "120" }).toString();
   const sum = useQuery({ queryKey: ["gov-sum"], queryFn: () => api.get("/governance/summary"), refetchInterval: 8000 });
+  const arch = useQuery({ queryKey: ["architecture"], queryFn: () => api.get("/bank/architecture") });
   const audit = useQuery({ queryKey: ["audit", qs], queryFn: () => api.get(`/governance/audit?${qs}`), refetchInterval: 8000 });
   if (sum.isLoading) return <PageSkeleton />;
   if (sum.isError) return <ErrorState error={sum.error} retry={() => sum.refetch()} />;
@@ -45,6 +46,9 @@ export default function Governance() {
           </CardBody>
         </Card>
         <div className="space-y-4">
+          {arch.data && <Card><CardHeader title="Two-sided data architecture" sub="Bank and customer data meet only at the consent & exchange gate." /><CardBody className="space-y-2">
+            {arch.data.data_layer.map((d: J, i: number) => <div key={d.id} className="rounded-lg border border-line bg-white p-2.5"><div className="text-sm font-semibold text-slate">{i + 1}. {d.label}</div><p className="text-xs text-muted">{d.contents.join(" · ")}</p></div>)}
+            <p className="text-xs text-muted">Bank-only outputs (scores, alerts, RM notes, escalations) are never loaded into customer-side workflows or APIs.</p></CardBody></Card>}
           <Card><CardHeader title="Controls in place" /><CardBody className="space-y-3">{s.controls.map((c: J) => (
             <div key={c.control} className="flex gap-2"><CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-teal" /><div><div className="text-sm font-semibold text-slate">{c.control}</div><p className="text-xs leading-relaxed text-muted">{c.detail}</p></div></div>))}</CardBody></Card>
           <Card><CardHeader title="Human overrides" sub="Latest reviewer decisions" /><CardBody className="space-y-2">{s.overrides.length === 0 ? <p className="text-sm text-muted">No decisions yet. Resolve an item in the <Link to="/reviews" className="font-semibold text-teal-dark underline">review queue</Link>.</p> : s.overrides.map((o: J) => (

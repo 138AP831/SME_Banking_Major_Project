@@ -8,7 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.api.deps import Ctx, get_ctx, get_db, staff
-from app.graphs.builder import SCENARIOS, TEMPLATES, graph_spec
+from app.graphs.builder import PORTAL_OF, SCENARIOS, TEMPLATES, graph_spec
 from app.models.entities import SME, HumanReviewDecision, WorkflowRun
 from app.services import review as review_svc
 from app.services import workflow_runner as wr
@@ -19,7 +19,7 @@ router = APIRouter(prefix="/api", tags=["workflows"], dependencies=[Depends(staf
 
 @router.get("/workflows/templates")
 def templates():
-    return [{"id": k, "label": v["label"], "description": v["description"], "nodes": [n for st in v["steps"] for n in (st if isinstance(st, list) else [st])]} for k, v in TEMPLATES.items()]
+    return [{"id": k, "label": v["label"], "description": v["description"], "portal": PORTAL_OF[k][0], "workflow": PORTAL_OF[k][1], "nodes": [n for st in v["steps"] for n in (st if isinstance(st, list) else [st])]} for k, v in TEMPLATES.items()]
 
 
 @router.get("/workflows/scenarios")

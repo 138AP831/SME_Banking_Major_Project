@@ -29,6 +29,19 @@ TEMPLATES: dict[str, dict[str, Any]] = {
         "steps": ["load_sme_profile", "validate_data", "build_shared_features", ["run_credit_assessment", "forecast_cash_flow"], "analyze_risk_signals", "evaluate_policy_rules",
                   "human_review_gate", "generate_explanation", "persist_results"]},
 }
+TEMPLATES.update({
+    "customer_readiness": {
+        "label": "Customer: financial readiness", "description": "Customer Portal workflow: customer-safe profile, financial analysis, cash-flow outlook and an indicative loan-readiness view. Uses no bank-restricted data.",
+        "steps": ["load_customer_profile", "validate_data", "build_shared_features", "forecast_cash_flow", "assess_loan_readiness", "explain_readiness", "persist_customer_results"]},
+    "customer_improvement": {
+        "label": "Customer: improvement & reassessment", "description": "Customer Portal workflow: improvement plan from the latest readiness assessment, external market data, SWOT and growth recommendations.",
+        "steps": ["load_customer_profile", "generate_improvement_plan", "fetch_market_intelligence", "build_growth_intelligence", "persist_customer_results"]},
+})
+# Which portal / architecture workflow each template belongs to (for the Studio and the architecture endpoint)
+PORTAL_OF = {"full_lifecycle": ("bank", "Full lifecycle"), "prospecting": ("bank", "Prospecting"), "kyc_onboarding": ("bank", "KYC onboarding"),
+             "credit_assessment": ("bank", "New loan applications (steps 1-3)"), "cashflow_ews": ("bank", "Existing loan monitoring (steps 4-5)"),
+             "customer_readiness": ("customer", "Customer financial readiness (steps 1-3)"), "customer_improvement": ("customer", "Customer improvement & reassessment (steps 4-6)")}
+CUSTOMER_TEMPLATE_IDS = ("customer_readiness", "customer_improvement")
 SCENARIOS = {
     "A": {"label": "A - Healthy borrower", "sme_id": "SME-1001", "template": "full_lifecycle", "expect": "Straight-through: eligible, no review, no shortfall."},
     "B": {"label": "B - Liquidity stress", "sme_id": "SME-1006", "template": "full_lifecycle", "expect": "Projected shortfall, critical alert, escalation review (HITL)."},

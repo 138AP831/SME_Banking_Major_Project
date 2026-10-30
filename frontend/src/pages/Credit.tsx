@@ -68,8 +68,9 @@ export default function Credit() {
         </Card>
 
         <Card className="lg:col-span-2">
-          <CardHeader title={a ? (a.preview ? "Assessment preview (not saved)" : "Latest assessment") : "Assessment"} right={a && <StatusBadge value={a.policy_outcome} />} />
+          <CardHeader title={a ? (a.preview ? "Assessment preview (not saved)" : "Latest assessment") : "Assessment"} right={a && <StatusBadge value={a.policy_outcome} label={{ eligible: "Approve for further consideration", refer: "Refer for human review", not_eligible: "Decline under illustrative demo policy" }[a.policy_outcome as string]} />} />
           <CardBody>
+            {a && <p className="mb-3 rounded-lg border border-sand/60 bg-sand-soft/50 px-3 py-2 text-xs text-[#6b5210]">Illustrative decision support from the demo policy engine. No loan has been approved or declined; a human reviews and decides.</p>}
             {!a ? <NotAvailable reason="No assessment on file for this SME. Preview one on the left or run the credit workflow." /> : (
               <div className="grid gap-5 md:grid-cols-[170px_1fr]">
                 <div className="flex flex-col items-center gap-2"><ScoreGauge score={a.model_score} /><StatusBadge value={a.risk_category} label={`${a.risk_category} risk`} />

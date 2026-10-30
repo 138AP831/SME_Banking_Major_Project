@@ -12,9 +12,10 @@ def completed_nodes(run):
 
 def test_templates_and_graph(client):
     t = client.get("/api/workflows/templates", headers=RM).json()
-    assert len(t) == 5
+    assert len(t) == 7  # 5 bank-side templates + 2 customer-portal templates
+    assert sum(1 for x in t if x["portal"] == "bank") == 5 and sum(1 for x in t if x["portal"] == "customer") == 2
     g = client.get("/api/workflows/graph/full_lifecycle", headers=RM).json()
-    assert {n["id"] for n in g["nodes"]} == ALL_NODES
+    assert {n["id"] for n in g["nodes"] if n["active"]} == ALL_NODES  # the node library also holds the customer-portal nodes (inactive here)
     assert any(e["kind"] == "parallel" for e in g["edges"])
 
 

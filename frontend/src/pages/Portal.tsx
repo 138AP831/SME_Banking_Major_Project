@@ -3,7 +3,8 @@ import { CheckCircle2, Circle } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { ForecastChart } from "@/components/charts";
-import { Badge, Button, Card, CardBody, CardHeader, Disclaimer, ErrorState, Input, Label, PageHeader, PageSkeleton, Select } from "@/components/ui/primitives";
+import { Badge, Button, Card, CardBody, CardHeader, Disclaimer, ErrorState, Input, Label, PageHeader, PageSkeleton, Segmented, Select } from "@/components/ui/primitives";
+import { Journey, type JourneyView } from "@/components/portal/Journey";
 import { api, type J } from "@/lib/api";
 import { inr } from "@/lib/format";
 
@@ -13,6 +14,7 @@ export default function Portal() {
   const companies = useQuery({ queryKey: ["portal-companies"], queryFn: () => api.get("/portal/companies") });
   const q = useQuery({ queryKey: ["portal", sme], queryFn: () => api.get(`/portal/me${sme ? `?sme_id=${sme}` : ""}`) });
   const [amount, setAmount] = useState(""), [purpose, setPurpose] = useState("");
+  const [view, setView] = useState<"overview" | JourneyView>("overview");
   const submit = useMutation({ mutationFn: () => api.post(`/portal/credit-request${q.data ? `?sme_id=${q.data.company.id}` : ""}`, { amount: +amount, purpose }), onSuccess: (r) => { toast.success(r.message); setAmount(""); setPurpose(""); qc.invalidateQueries({ queryKey: ["portal"] }); }, onError: (e: Error) => toast.error(e.message) });
   if (q.isLoading) return <PageSkeleton />;
   if (q.isError) return <ErrorState error={q.error} retry={() => q.refetch()} />;
@@ -21,6 +23,8 @@ export default function Portal() {
     <div className="mx-auto max-w-4xl">
       <PageHeader title={`Welcome, ${d.company.name}`} sub="Your accounts, onboarding progress and requests in one place." right={
         <Select aria-label="Company" className="w-[260px]" value={sme || d.company.id} onChange={(e) => setSme(e.target.value)}>{(companies.data ?? []).map((c: J) => <option key={c.id} value={c.id}>{c.name}</option>)}</Select>} />
+      <div className="mb-4 overflow-x-auto"><Segmented value={view} onChange={setView} options={[{ value: "overview", label: "Overview" }, { value: "readiness", label: "My application & readiness" }, { value: "plan", label: "Improvement plan & progress" }, { value: "growth", label: "Business growth" }, { value: "privacy", label: "Privacy & consent" }]} /></div>
+      {view !== "overview" ? <Journey view={view} smeId={d.company.id} setView={(v) => setView(v as JourneyView)} /> : (<>
       <div className="mb-4 grid gap-3 sm:grid-cols-3">
         <Card className="p-4"><div className="text-xs font-semibold text-muted">Current balance</div><div className="num mt-1 text-2xl font-bold text-slate">{inr(d.balance)}</div></Card>
         <Card className="p-4"><div className="text-xs font-semibold text-muted">Sanctioned limit</div><div className="num mt-1 text-2xl font-bold text-slate">{d.limit ? inr(d.limit) : "None"}</div></Card>
@@ -41,6 +45,7 @@ export default function Portal() {
             <div><Label>What for?</Label><Input value={purpose} onChange={(e) => setPurpose(e.target.value)} placeholder="e.g. Raw material purchase" /></div>
             <Button disabled={!amount} loading={submit.isPending} onClick={() => submit.mutate()}>Send request</Button></div></CardBody></Card>
       </div>
+      </>)}
       <div className="mt-4"><Disclaimer>{d.note}</Disclaimer></div>
     </div>
   );

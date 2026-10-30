@@ -110,6 +110,14 @@ def _await_review(run_id: str) -> None:
 
 
 def _finish(run_id: str, values: dict) -> None:
+    if str(values.get("template", "")).startswith("customer_"):  # customer-side runs have no bank policy/credit fields at all
+        rd = values.get("readiness") or {}
+        out = {"explanation": (values.get("explanation") or {}).get("text"), "persisted": values.get("persisted"), "warnings": values.get("warnings"),
+               "headline": {"readiness_status": rd.get("status"), "readiness_index": rd.get("readiness_index"), "plan_actions": len((values.get("improvement") or {}).get("items") or []) or None,
+                            "market_source": (values.get("market") or {}).get("source")}}
+        _set_status(run_id, "completed", final_output=to_jsonable(out), current_node=None)
+        ee.emit(run_id, "__end__", "run_completed", "completed", output_data=out)
+        return
     out = {"policy_outcome": (values.get("policy") or {}).get("outcome"), "explanation": (values.get("explanation") or {}).get("text"), "persisted": values.get("persisted"),
            "review": values.get("review"), "warnings": values.get("warnings"),
            "headline": {"credit_score": (values.get("credit") or {}).get("model_score"), "risk_category": (values.get("credit") or {}).get("risk_category"),

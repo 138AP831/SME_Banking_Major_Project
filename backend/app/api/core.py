@@ -120,6 +120,8 @@ def governance_summary(db: Session = Depends(get_db)):
                 {"control": "Synthetic data labelling", "status": "active", "detail": "All SME, transaction, bureau and document data is synthetic. Utilization history and external verification are SIMULATED and labelled."},
                 {"control": "Model transparency", "status": "active", "detail": "Credit PD is an XGBoost model trained on synthetic labels with SHAP explanations; the policy engine is separate and configurable."},
                 {"control": "Consent gating", "status": "active", "detail": "Outreach recommendations are blocked for SMEs whose marketing / data-use consent is not granted."},
+                {"control": "Consent & exchange gate", "status": "active", "detail": "Bank-side workflows and users can read a customer's submitted information only while purpose-specific consent is granted. Every grant, withdrawal and read through the gate is audited."},
+                {"control": "Customer-safe boundary", "status": "active", "detail": "The Customer Portal uses separate graphs, an allow-list of fields and response schemas. Internal scores, exposure, alerts, RM notes and escalations are never loaded into customer-side state, and the SME Customer role is denied every bank-side API."},
             ]}
 
 

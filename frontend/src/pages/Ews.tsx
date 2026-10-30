@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 import { toast } from "sonner";
 import { Badge, Button, Card, CardBody, CardHeader, Disclaimer, EmptyState, ErrorState, Input, Label, NotAvailable, PageHeader, PageSkeleton, Segmented, Select, SimBadge, StatusBadge, Textarea } from "@/components/ui/primitives";
+import { MonitoringCase } from "@/components/MonitoringCase";
 import { api, type J } from "@/lib/api";
 import { inr, title } from "@/lib/format";
 import { useRole } from "@/lib/role";
@@ -36,6 +37,7 @@ function Detail({ id }: { id: string }) {
           <p className="mt-1 text-sm text-ink">{s.description}</p></div>))}
         {a.missing_data.length > 0 && <div className="pt-1">{a.missing_data.map((m: string, i: number) => <NotAvailable key={i} reason={m} />)}</div>}</CardBody></Card>
       <Card><CardHeader title="Talking points for the conversation" /><CardBody><ul className="list-disc space-y-1.5 pl-5 text-sm">{a.talking_points.map((t: string, i: number) => <li key={i}>{t}</li>)}</ul></CardBody></Card>
+      <MonitoringCase alertId={id} />
       <Card><CardHeader title="RM feedback" sub="Logged outcomes adjust future prioritisation slightly" />
         <CardBody className="space-y-3">
           {a.feedback.map((f: J) => <div key={f.id} className="rounded-lg bg-white p-2.5 text-sm"><div className="flex items-center justify-between"><span className="font-semibold text-slate">{f.action_taken}</span><StatusBadge value={f.outcome} /></div><div className="text-xs text-muted">{f.rm_name} · {f.notes}</div></div>)}

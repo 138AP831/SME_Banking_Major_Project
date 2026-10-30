@@ -22,4 +22,12 @@ class WFState(TypedDict, total=False):
     review: dict[str, Any]
     explanation: dict[str, Any]
     persisted: dict[str, Any]
+    # customer-side workflows (customer-safe state only: no bank-restricted fields are ever placed here)
+    customer: dict[str, Any]
+    readiness: dict[str, Any]
+    improvement: dict[str, Any]
+    market: dict[str, Any]
+    growth: dict[str, Any]
+    progress: dict[str, Any]
+    customer_submission: dict[str, Any]  # bank workflows: consent-gated view of the customer's submission
     warnings: Annotated[list, operator.add]
