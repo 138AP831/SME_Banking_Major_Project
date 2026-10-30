@@ -18,7 +18,7 @@ import { useRunStream } from "@/lib/useRunStream";
 import { cn } from "@/lib/utils";
 
 const W = 188, H = 64;
-const TYPE_COLOR: Record<string, string> = { data: "#1D3557", validation: "#1D3557", features: "#14506f", model: "#0A9396", policy: "#7a5a0b", human: "#7a5a0b", explain: "#14506f" };
+const TYPE_COLOR: Record<string, string> = { customer: "#0A9396", data: "#1D3557", validation: "#1D3557", features: "#14506f", model: "#0A9396", policy: "#7a5a0b", human: "#7a5a0b", explain: "#14506f" };
 
 const ICON = (s: NodeState["status"]) => {
   switch (s) {
@@ -141,7 +141,7 @@ export default function Studio() {
           <div className="flex flex-wrap items-end gap-3">
             <div><Label>Workflow template</Label>
               <Select value={template} onChange={(e) => { setTemplate(e.target.value); setFault(""); }} className="w-[260px]">
-                {(templates.data ?? []).map((t: J) => <option key={t.id} value={t.id}>{t.label}</option>)}
+                {["bank", "customer"].map((p) => <optgroup key={p} label={p === "bank" ? "Bank Portal workflows" : "Customer Portal workflows"}>{(templates.data ?? []).filter((t: J) => t.portal === p).map((t: J) => <option key={t.id} value={t.id}>{t.label}</option>)}</optgroup>)}
               </Select></div>
             <div><Label>SME</Label><SmePicker value={sme} onChange={setSme} /></div>
             <Button onClick={() => startRun()} loading={start.isPending} disabled={role === "SME Customer"}><Play className="h-4 w-4" />Run workflow</Button>
@@ -152,7 +152,7 @@ export default function Studio() {
               ))}
             </div>
           </div>
-          <p className="text-xs text-muted">{templates.data?.find((t: J) => t.id === template)?.description}</p>
+          <p className="text-xs text-muted">{(() => { const t = templates.data?.find((x: J) => x.id === template); return t ? `${t.portal === "bank" ? "Bank Portal" : "Customer Portal"} · ${t.workflow}. ${t.description}` : ""; })()}</p>
           <details className="text-xs">
             <summary className="cursor-pointer font-semibold text-muted">Testing options</summary>
             <div className="mt-2 flex flex-wrap items-center gap-2"><FlaskConical className="h-4 w-4 text-[#7a5a0b]" />

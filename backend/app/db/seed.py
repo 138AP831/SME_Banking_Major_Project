@@ -18,10 +18,10 @@ from app.ml import kyc as kyc_ml
 from app.ml import kyc_docs
 from app.ml import propensity as prop_ml
 from app.ml.features import build_features
-from app.models.entities import (SME, AppSetting, CreditApplication, KYCApplication, Transaction, User, new_id, utcnow)
+from app.models.entities import (SME, AppSetting, ConsentRecord, CreditApplication, KYCApplication, Transaction, User, new_id, utcnow)
 from app.repositories import data as repo
 from app.services import analysis
-from app.services import kyc_service
+from app.services import exchange, kyc_service
 from app.services import policy as policy_svc
 from app.services.audit import log_audit
 
@@ -181,6 +181,18 @@ def ensure_models() -> None:
     prop_ml.load()
 
 
+def ensure_demo_consents() -> int:
+    """SMEs that already have a credit application are recorded as having authorised sharing for it (labelled synthetic), so the
+    consent & exchange gate has a consistent history. Customers can withdraw it in the portal. Idempotent."""
+    n = 0
+    with session_scope() as s:
+        for sme_id in sorted({a.sme_id for a in s.scalars(select(CreditApplication))}):
+            if not s.scalars(select(ConsentRecord).where(ConsentRecord.sme_id == sme_id, ConsentRecord.purpose == "loan_application")).first():
+                exchange.set_consent(s, sme_id, "loan_application", True, "Seeded demo consent (synthetic)", "system", "existing application in the synthetic dataset")
+                n += 1
+    return n
+
+
 def seed_all(with_workflows: bool | None = None) -> dict:
     cfg = get_settings()
     ensure_models()
@@ -188,6 +200,7 @@ def seed_all(with_workflows: bool | None = None) -> dict:
     as_of = date.fromisoformat(info["as_of"])
     seed_applications(as_of)
     seed_analyses(as_of)
+    ensure_demo_consents()
     runs = bootstrap_workflows() if (cfg.bootstrap_workflows if with_workflows is None else with_workflows) else []
     return {**info, "bootstrap_runs": runs}
 
@@ -210,6 +223,8 @@ def ensure_seeded() -> None:
     init_db()
     if not is_seeded():
         seed_all()
+    else:
+        ensure_demo_consents()  # databases seeded before the consent gate existed
 
 
 if __name__ == "__main__":

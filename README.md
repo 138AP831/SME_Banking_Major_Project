@@ -82,6 +82,43 @@ flowchart LR
   DB -- SSE stream --> TQ
 ```
 
+### Two-sided architecture (Bank Portal and Customer Portal)
+
+The app has two logically separate sides that meet only at a consent & exchange gate. `GET /api/bank/architecture` returns the same structure.
+
+```mermaid
+flowchart LR
+  subgraph BANK[Bank Portal - lending and risk]
+    N[New loan applications<br/>intake - credit risk - decision support]
+    M[Existing loan monitoring<br/>early warning - prioritise - RM contact and verify - escalate]
+  end
+  subgraph DATA[Shared data and integration layer]
+    BR[(Bank-restricted data)] --> GATE{{Consent and exchange gate}} --> CD[(Customer data domain)]
+    EXT[(External market data)] --> CD
+  end
+  subgraph CUST[Customer Portal - readiness and growth]
+    R[Submit - profile - indicative readiness]
+    I[Improvement plan - growth intelligence - track and reassess]
+  end
+  N --- BR
+  M --- BR
+  CD --> R
+  CD --> I
+```
+
+| Architecture step | Where it lives |
+|---|---|
+| Bank 1-3 (intake, credit risk, decision support) | `GET /api/bank/intake/{sme}`, existing credit module / `credit_assessment` graph, `GET /api/bank/decision-support/{sme}` (labelled illustrative; never a lending decision) |
+| Bank 4-5 (early warning, prioritisation) | Existing EWS and `cashflow_ews` graph (priority = risk + exposure + urgency + actionability) |
+| Bank 6-7 (RM contact and verify, escalate) | Early Warning page -> *Monitoring case*; `POST /api/bank/cases/{alert}/contacts`, `/escalate`; escalations go to Credit Risk or Collections with an evidence snapshot |
+| Customer 1-3 (submit, profile, readiness) | SME Portal -> *My application & readiness*; `customer_readiness` graph |
+| Customer 4-6 (plan, growth intelligence, track and reassess) | SME Portal -> *Improvement plan*, *Business growth*; `customer_improvement` graph; each reassessment uses the latest submission |
+| Consent & exchange gate | `services/exchange.py`: purpose-specific consent history; the bank reads a customer submission only while `loan_application` consent is granted; every read, grant and withdrawal is audited |
+
+**Privacy boundary (enforced in the backend, not only the UI).** The `SME Customer` role is denied every bank-side API by middleware and per-route guards. Customer graphs start from an allow-list view of the SME record and strip facility, bureau and exposure features, so no bank-restricted field ever enters customer-side graph state. Customer endpoints return explicit response schemas (`schemas/customer.py`), and tests scan every customer payload and customer-graph event for bank-only keys. Customer readiness uses its own illustrative criteria (`services/readiness.py`); it does not use the credit model, the internal score or the policy thresholds.
+
+**Market data.** Set `GOOGLE_PLACES_API_KEY` to use Google Places for customer-side market intelligence. Without a key, or if the call fails, the portal shows deterministic data labelled *synthetic demo data*. The live Google Places call is implemented but has not been exercised against the real API.
+
 ### The pipeline
 
 ```mermaid
@@ -124,6 +161,9 @@ cash-flow & EWS) come from `GET /api/workflows/templates` and `/graph`, so the c
 | Propensity | One-vs-rest logistic model, uncalibrated |
 | KYC | Rule-based (Verhoeff, GSTIN, PAN checks); only the last 4 Aadhaar digits are stored; OCR needs Tesseract, otherwise text/sample documents are used |
 | External verification (GST, PAN, Aadhaar, bureau, e-sign) | **Simulated** placeholders, always labelled |
+| Customer readiness, improvement plan, market SWOT | Rule-based, illustrative criteria on synthetic data; indicative only, not an approval |
+| Market data | Synthetic by default (labelled); Google Places only when a key is configured |
+| Consent & exchange gate | Real enforcement in the API and graphs; demo consent is recorded per purpose with history |
 | Policy engine | Configurable demo rules (KYC-001, CRD-001..007, DATA-001, FCST-001, EWS-001, CON-001) |
 | Roles | Demo RBAC via `X-Demo-Role` header – a prototype convention, **not authentication** |
 
@@ -140,6 +180,7 @@ Decisions require a written reason (10+ characters; 25+ to approve over blocking
 | `LLM_PROVIDER` | `none` | `none`, `anthropic` or `openai`. Optional polish of explanations; the deterministic text is always produced first |
 | `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` | empty | Only read from the environment; never stored or logged |
 | `LLM_MODEL` | empty | Optional model override |
+| `GOOGLE_PLACES_API_KEY` | empty | Optional. Enables live Google Places listings in the Customer Portal; otherwise labelled synthetic data |
 | `DEMO_STEP_DELAY_MS` | `450` | Pacing so live runs are watchable; `0` disables |
 | `DEMO_AS_OF_DATE` | today | Anchor date for synthetic data |
 | `BOOTSTRAP_WORKFLOWS` | `true` | Run five real workflows on first seed |
@@ -150,7 +191,8 @@ Decisions require a written reason (10+ characters; 25+ to approve over blocking
 
 ```bash
 cd backend && source .venv/bin/activate && pip install -r requirements-dev.txt
-python -m pytest app/tests -q          # workflows, scenarios A/B/C, resume, fault injection, RBAC, masking, modules
+python -m pytest app/tests -q          # workflows, scenarios A/B/C, resume, fault injection, RBAC, masking, modules,
+                                       # plus test_two_sided_architecture.py: privacy boundary, consent gate, customer journey, monitoring and escalation, audit
 
 cd frontend
 npm test                               # Vitest: run-state derivation, formatters, components, role gating
@@ -163,10 +205,12 @@ Fault injection (`FAULTS`) is a labelled test option used to exercise failed-nod
 
 ```
 backend/app/
-  api/          FastAPI routers, role guard
+  api/          FastAPI routers, role guard (bank.py = bank monitoring/decision support, portal.py = Customer Portal)
   graphs/       LangGraph state, nodes, builder, execution events
   ml/           KYC, features, credit, propensity, forecast, EWS, training data
-  services/     workflow runner, policy, review, audit, evaluation, dashboards, KYC service
+  services/     workflow runner, policy, review, audit, evaluation, dashboards, KYC service,
+                exchange (consent gate), customer, readiness, market
+  schemas/      customer-safe response schemas
   db/           session, synthetic data, seed
   tests/        pytest suite
 frontend/src/

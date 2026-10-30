@@ -15,13 +15,17 @@ from app.ml import propensity as prop_ml
 from app.ml.features import build_features, feature_quality
 from app.models.entities import HumanReviewDecision
 from app.repositories import data as repo
-from app.services import analysis, llm
+from app.services import analysis, customer as customer_svc, exchange, llm
+from app.services import market as market_svc
+from app.services import readiness as readiness_svc
 from app.services import policy as policy_svc
 from app.services import review as review_svc
 from app.services.audit import log_audit
 from app.services.kyc_service import kyc_summary_for_policy
 
 CREDIT_TEMPLATES = ("full_lifecycle", "credit_assessment")
+CUSTOMER_TEMPLATES = ("customer_readiness", "customer_improvement")
+BANK_ONLY_FEATURES = frozenset({"utilization", "utilization_change_90d", "has_facility_history", "outstanding_exposure", "sanctioned_limit", "bureau_score", "bureau_score_missing"})
 
 
 def _rehydrate(fn):
@@ -51,8 +55,13 @@ def load_sme_profile(s: dict) -> dict:
         txns = repo.load_txns(db, s["sme_id"], _asof(s))
         kyc = kyc_summary_for_policy(db, s["sme_id"])
         req = repo.open_credit_application(db, s["sme_id"])
+        gated = exchange.bank_view_of_submission(db, s["sme_id"], "SMEFlow AI", "system") if s["template"] in CREDIT_TEMPLATES else None
     sme = to_jsonable(sme)
-    return {"sme": sme, "kyc": to_jsonable(kyc), "_metrics": {"transactions": len(txns), "kyc_status": kyc["status"], "consent": sme["consent_status"]}}
+    out = {"sme": sme, "kyc": to_jsonable(kyc), "_metrics": {"transactions": len(txns), "kyc_status": kyc["status"], "consent": sme["consent_status"]}}
+    if gated is not None:  # the bank workflow only sees the customer's own submission if the customer authorised it
+        out["customer_submission"] = to_jsonable({k: gated[k] for k in ("authorised", "purpose", "reason", "shared_fields", "submission")})
+        out["_metrics"]["customer_submission_shared"] = gated["authorised"]
+    return out
 
 
 def validate_data(s: dict) -> dict:
@@ -75,6 +84,8 @@ def build_shared_features(s: dict) -> dict:
     base = build_features(s["sme"], txns, _asof(s))
     req = analysis.default_request(base, app, _params(s)) if s["template"] in CREDIT_TEMPLATES else None
     feats = build_features(s["sme"], txns, _asof(s), req) if req else base
+    if s["template"] in CUSTOMER_TEMPLATES:  # customer-side graphs never carry facility / bureau features, not even as neutral defaults
+        feats = {k: v for k, v in feats.items() if k not in BANK_ONLY_FEATURES}
     out = {"features": to_jsonable(feats), "_metrics": {"feature_count": len(feats)}}
     if req:
         out["params"] = {**_params(s), "_request": req}
@@ -102,6 +113,8 @@ def forecast_cash_flow(s: dict) -> dict:
     with session_scope() as db:
         txns = repo.load_txns(db, s["sme_id"], _asof(s))
     fc = analysis.compute_forecast(s["sme"], txns, _asof(s), int(p.get("horizon_days") or 60), p.get("scenario"))
+    if s["template"] in CUSTOMER_TEMPLATES:  # RM-style "recommended_action" becomes a plain cash-flow suggestion for the customer side
+        fc["cash_flow_suggestion"] = fc.pop("recommended_action", None)
     sm = fc["summary"]
     return {"forecast": to_jsonable(fc), "_metrics": {"days_to_shortfall": sm["days_to_shortfall"], "min_balance": sm["min_balance"], "horizon_days": int(p.get("horizon_days") or 60)}}
 
@@ -209,6 +222,87 @@ def persist_results(s: dict) -> dict:
     return {"persisted": ids, "_metrics": {"records": len([v for v in ids.values() if v])}}
 
 
+# =============================================================================== customer-side nodes (Customer Portal workflows)
+def load_customer_profile(s: dict) -> dict:
+    """Customer Data Domain loader. Builds a customer-safe state: an allow-list view of the SME, the customer's own submission, document
+    completeness and consent flags. Bank-restricted fields (bureau, exposure, utilisation, limits, alerts, RM notes) are never loaded."""
+    with session_scope() as db:
+        raw = repo.get_sme_dict(db, s["sme_id"])
+        if not raw:
+            raise LookupError(f"SME {s['sme_id']} not found")
+        safe = exchange.customer_sme_view(raw)
+        sub = customer_svc.submission_view(exchange.latest_submission(db, s["sme_id"]), _asof(s))
+        docs = customer_svc.docs_summary(db, s["sme_id"])
+        consent = {k: v["granted"] for k, v in exchange.consent_state(db, s["sme_id"]).items()}
+        n_txn = len(repo.load_txns(db, s["sme_id"], _asof(s)))
+        if not consent.get("readiness_assessment") and s["template"] == "customer_readiness":
+            raise PermissionError("The customer has not given consent for the readiness assessment.")
+        if s["template"] in CUSTOMER_TEMPLATES:
+            log_audit(db, actor="SMEFlow AI", role="system", action="customer_data_accessed", category="customer", entity_type="customer_data_domain", entity_id=s["sme_id"], sme_id=s["sme_id"], run_id=s["run_id"],
+                      summary="Customer-side workflow read the customer data domain (customer-safe fields only)", details={"fields": sorted(safe), "purpose": "readiness_assessment"}, is_ai=True)
+    assert not exchange.find_forbidden(safe), "bank-restricted field reached customer state"
+    return {"sme": safe, "customer": {"submission": sub, "documents": docs, "consent": consent}, "_metrics": {"transactions": n_txn, "submission_version": (sub or {}).get("version"),
+                                                                                                            "documents": f"{docs['present_count']}/{docs['required_count']}", "bank_fields_loaded": 0}}
+
+
+def assess_loan_readiness(s: dict) -> dict:
+    cust = s["customer"]
+    r = readiness_svc.compute_readiness(features=s["features"], forecast=s.get("forecast"), submission=cust.get("submission"), docs=cust["documents"], declared_turnover=s["sme"].get("declared_annual_turnover"), as_of=s["as_of"])
+    r["profile"] = customer_svc.build_profile(s["features"], s.get("forecast"), cust.get("submission"))
+    return {"readiness": to_jsonable(r), "_metrics": {"status": r["status"], "readiness_index": r["readiness_index"], "gaps": len(r["gaps"]), "criteria": r["criteria_version"]}}
+
+
+def explain_readiness(s: dict) -> dict:
+    r = s["readiness"]
+    text = readiness_svc.narrative(s["sme"]["name"], r)
+    text, provider = llm.polish(text)
+    return {"explanation": {"text": text, "llm_provider": provider, "method": "deterministic indicator narrative" + (f" rephrased by {provider}" if provider else ""), "disclaimer": readiness_svc.DISCLAIMER},
+            "_metrics": {"llm": provider or "none"}}
+
+
+def generate_improvement_plan(s: dict) -> dict:
+    with session_scope() as db:
+        row = customer_svc.latest_readiness(db, s["sme_id"])
+        if row is None:
+            raise LookupError("No readiness assessment exists yet; run the readiness workflow first.")
+        rview = {"status": row.status, "readiness_index": row.readiness_index, "indicators": row.indicators, "assessment_id": row.id, "version": row.version}
+    items = readiness_svc.build_plan(rview["indicators"])
+    return {"readiness": to_jsonable(rview), "improvement": {"items": to_jsonable(items), "based_on_version": rview["version"]}, "_metrics": {"actions": len(items), "based_on_version": rview["version"]}}
+
+
+def fetch_market_intelligence(s: dict) -> dict:
+    if not s["customer"]["consent"].get("market_intelligence"):
+        return {"market": {"status": "consent_required", "note": "The customer has not allowed a market lookup for their location."}, "_metrics": {"status": "consent_required"}}
+    loc = ((s["customer"].get("submission") or {}).get("location") or {}).get("city") or s["sme"]["city"]
+    m = market_svc.fetch(loc, s["sme"]["industry"])
+    return {"market": to_jsonable(m), "_metrics": {"source": m["source"], "synthetic": m["is_synthetic"], "competitors": len(m["competitors"])}}
+
+
+def build_growth_intelligence(s: dict) -> dict:
+    m = s.get("market") or {}
+    if m.get("status") == "consent_required":
+        return {"growth": {"status": "consent_required"}, "_metrics": {"status": "consent_required"}}
+    g = market_svc.growth_intelligence(m, s.get("readiness"), s["sme"]["name"])
+    return {"growth": to_jsonable(g), "_metrics": {"recommendations": len(g["recommendations"]), "synthetic": g["is_synthetic"]}}
+
+
+def persist_customer_results(s: dict) -> dict:
+    ids: dict[str, Any] = {}
+    sme = {"id": s["sme_id"], "name": s["sme"]["name"]}
+    with session_scope() as db:
+        if s["template"] == "customer_readiness":
+            sub = (s.get("customer") or {}).get("submission")
+            ids.update(customer_svc.persist_readiness(db, sme, s["run_id"], s["readiness"], s["explanation"]["text"], sub, bool(_params(s).get("reassessment"))))
+        else:
+            row = customer_svc.latest_readiness(db, s["sme_id"])
+            ids["plan"] = customer_svc.sync_improvement_plan(db, s["sme_id"], row, s["improvement"]["items"])
+            if s.get("market") and s["market"].get("status") != "consent_required":
+                ids["market_snapshot_id"] = customer_svc.save_market(db, s["sme_id"], s["run_id"], s["market"], s.get("growth"))
+            log_audit(db, actor="SMEFlow AI", role="system", action="improvement_plan_updated", category="customer", entity_type="improvement_plan", entity_id=s["sme_id"], sme_id=s["sme_id"], run_id=s["run_id"],
+                      summary=f"Improvement plan refreshed for {sme['name']} ({ids['plan']['created']} new, {ids['plan']['resolved_by_reassessment']} resolved)", details=ids["plan"], is_ai=True)
+    return {"persisted": ids, "_metrics": {"records": len(ids)}}
+
+
 _RAW = {
     "load_sme_profile": (load_sme_profile, ("sme_id", "as_of")),
     "validate_data": (validate_data, ("sme", "kyc")),
@@ -221,6 +315,13 @@ _RAW = {
     "human_review_gate": (human_review_gate, ("policy",)),
     "generate_explanation": (generate_explanation, ("policy", "review")),
     "persist_results": (persist_results, ("explanation", "review")),
+    "load_customer_profile": (load_customer_profile, ("sme_id", "as_of")),
+    "assess_loan_readiness": (assess_loan_readiness, ("features", "forecast", "customer")),
+    "explain_readiness": (explain_readiness, ("readiness",)),
+    "generate_improvement_plan": (generate_improvement_plan, ("customer",)),
+    "fetch_market_intelligence": (fetch_market_intelligence, ("customer",)),
+    "build_growth_intelligence": (build_growth_intelligence, ("market", "readiness")),
+    "persist_customer_results": (persist_customer_results, ("explanation", "improvement", "market")),
 }
 
 NODE_META = {
@@ -235,6 +336,13 @@ NODE_META = {
     "human_review_gate": {"label": "Human review gate", "type": "human", "description": "Pauses the graph with interrupt() until an authorised reviewer decides. Never auto-approves."},
     "generate_explanation": {"label": "Generate explanation", "type": "explain", "description": "Plain-language explanation from the actual factors; an optional LLM may only rephrase it."},
     "persist_results": {"label": "Persist results", "type": "data", "description": "Writes assessments, forecasts, alerts, recommendations and the audit trail."},
+    "load_customer_profile": {"label": "Load customer profile", "type": "customer", "description": "Customer Portal. Reads only the customer data domain through an allow-list: no bureau score, exposure, limits, alerts or RM notes ever enter this graph."},
+    "assess_loan_readiness": {"label": "Assess loan readiness", "type": "customer", "description": "Customer Portal. Rule-based indicative readiness against illustrative criteria. Independent of the bank's credit model and policy thresholds."},
+    "explain_readiness": {"label": "Explain readiness", "type": "explain", "description": "Customer Portal. Plain-language explanation of strengths and gaps, with an indicative-only disclaimer."},
+    "generate_improvement_plan": {"label": "Generate improvement plan", "type": "customer", "description": "Customer Portal. Turns readiness gaps into actions with the reason each matters; keeps the customer's completed actions."},
+    "fetch_market_intelligence": {"label": "Fetch market data", "type": "data", "description": "Customer Portal. External Market Data (Google Places when configured, otherwise clearly labelled synthetic data). Needs the customer's consent."},
+    "build_growth_intelligence": {"label": "Build growth intelligence", "type": "customer", "description": "Customer Portal. SWOT and growth recommendations from market signals and the customer's own readiness indicators."},
+    "persist_customer_results": {"label": "Persist customer results", "type": "data", "description": "Customer Portal. Writes the readiness assessment or improvement plan and audit events to the customer data domain."},
 }
 
 

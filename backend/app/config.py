@@ -55,6 +55,9 @@ class Settings(BaseSettings):
     llm_model: str = ""
     llm_timeout_s: float = 20.0
 
+    # Optional Google Places key for customer-side market intelligence. Without it, clearly labelled synthetic demo data is used.
+    google_places_api_key: str | None = None
+
 
 @lru_cache
 def get_settings() -> Settings:

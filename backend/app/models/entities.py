@@ -351,3 +351,118 @@ class ModelMetric(Base):
     dataset_type: Mapped[str] = mapped_column(String(40), default="synthetic")
     note: Mapped[str] = mapped_column(Text, default="")
     computed_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+# --------------------------------------------------------------------------- Consent & exchange gate (architecture update)
+class ConsentRecord(Base):
+    """Append-only consent history. The latest row per (sme_id, purpose) is the current state."""
+    __tablename__ = "consent_records"
+    id: Mapped[str] = mapped_column(String(24), primary_key=True)
+    sme_id: Mapped[str] = mapped_column(ForeignKey("smes.id"), index=True)
+    purpose: Mapped[str] = mapped_column(String(32), index=True)  # loan_application | readiness_assessment | market_intelligence
+    granted: Mapped[bool] = mapped_column(Boolean)
+    actor: Mapped[str] = mapped_column(String(80))
+    role: Mapped[str] = mapped_column(String(40))
+    note: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
+
+
+# --------------------------------------------------------------------------- Customer data domain (customer-visible only)
+class CustomerSubmission(Base):
+    """What the SME itself submits (Customer Portal step 1). Versioned; reassessments use the latest version."""
+    __tablename__ = "customer_submissions"
+    id: Mapped[str] = mapped_column(String(24), primary_key=True)
+    sme_id: Mapped[str] = mapped_column(ForeignKey("smes.id"), index=True)
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    business_profile: Mapped[dict] = mapped_column(JSON, default=dict)
+    financials: Mapped[dict] = mapped_column(JSON, default=dict)  # annual_revenue, annual_expenses, other_liabilities, ...
+    existing_loans: Mapped[list] = mapped_column(JSON, default=list)  # [{lender, outstanding, monthly_emi}]
+    requested_amount: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    tenure_months: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    purpose: Mapped[str] = mapped_column(String(120), default="")
+    location: Mapped[dict] = mapped_column(JSON, default=dict)  # city, state, pincode (optional)
+    submitted_by: Mapped[str] = mapped_column(String(80), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
+
+
+class ReadinessAssessment(Base):
+    """Indicative loan-readiness result shown to the customer. NOT a credit decision and holds no bank-internal scores."""
+    __tablename__ = "readiness_assessments"
+    id: Mapped[str] = mapped_column(String(24), primary_key=True)
+    sme_id: Mapped[str] = mapped_column(ForeignKey("smes.id"), index=True)
+    run_id: Mapped[Optional[str]] = mapped_column(String(40), nullable=True, index=True)
+    submission_id: Mapped[Optional[str]] = mapped_column(String(24), nullable=True)
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    status: Mapped[str] = mapped_column(String(24))  # likely_ready | nearly_ready | needs_improvement | more_information_needed
+    readiness_index: Mapped[int] = mapped_column(Integer, default=0)  # 0-100, illustrative; not a credit score
+    indicators: Mapped[list] = mapped_column(JSON, default=list)
+    strengths: Mapped[list] = mapped_column(JSON, default=list)
+    gaps: Mapped[list] = mapped_column(JSON, default=list)
+    explanation: Mapped[str] = mapped_column(Text, default="")
+    is_reassessment: Mapped[bool] = mapped_column(Boolean, default=False)
+    inputs: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
+
+
+class ImprovementAction(Base):
+    __tablename__ = "improvement_actions"
+    id: Mapped[str] = mapped_column(String(24), primary_key=True)
+    sme_id: Mapped[str] = mapped_column(ForeignKey("smes.id"), index=True)
+    assessment_id: Mapped[Optional[str]] = mapped_column(String(24), nullable=True)
+    code: Mapped[str] = mapped_column(String(40), index=True)
+    title: Mapped[str] = mapped_column(String(160))
+    why: Mapped[str] = mapped_column(Text, default="")
+    how: Mapped[str] = mapped_column(Text, default="")
+    priority: Mapped[int] = mapped_column(Integer, default=5)
+    status: Mapped[str] = mapped_column(String(12), default="open", index=True)  # open | done | superseded
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class MarketSnapshot(Base):
+    """External Market Data snapshot used for customer-side business intelligence."""
+    __tablename__ = "market_snapshots"
+    id: Mapped[str] = mapped_column(String(24), primary_key=True)
+    sme_id: Mapped[str] = mapped_column(ForeignKey("smes.id"), index=True)
+    run_id: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)
+    source: Mapped[str] = mapped_column(String(24))  # google_places | synthetic_demo
+    payload: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
+
+
+# --------------------------------------------------------------------------- Bank-restricted: monitoring case work
+class RMContact(Base):
+    """Step 6 of existing-loan monitoring: RM contact and verification. Bank-only."""
+    __tablename__ = "rm_contacts"
+    id: Mapped[str] = mapped_column(String(24), primary_key=True)
+    alert_id: Mapped[str] = mapped_column(ForeignKey("alerts.id"), index=True)
+    sme_id: Mapped[str] = mapped_column(ForeignKey("smes.id"), index=True)
+    rm_name: Mapped[str] = mapped_column(String(80))
+    rm_role: Mapped[str] = mapped_column(String(40))
+    channel: Mapped[str] = mapped_column(String(16))  # phone | visit | email | video
+    issue_verified: Mapped[str] = mapped_column(String(20))  # confirmed | partially_confirmed | not_confirmed | unreachable
+    business_situation: Mapped[str] = mapped_column(Text, default="")
+    outcome: Mapped[str] = mapped_column(String(16))  # resolved | improving | no_change | worsening
+    commitment_amount: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    commitment_due: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
+    commitment_status: Mapped[str] = mapped_column(String(12), default="none")  # none | pending | kept | missed
+    notes: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
+
+
+class Escalation(Base):
+    """Step 7: referral to Credit Risk or Collections. Bank-only; never exposed to the customer portal."""
+    __tablename__ = "escalations"
+    id: Mapped[str] = mapped_column(String(24), primary_key=True)
+    alert_id: Mapped[str] = mapped_column(ForeignKey("alerts.id"), index=True)
+    sme_id: Mapped[str] = mapped_column(ForeignKey("smes.id"), index=True)
+    target: Mapped[str] = mapped_column(String(24))  # Credit Risk | Collections
+    trigger: Mapped[str] = mapped_column(String(24))  # distress_persists | commitment_missed | both
+    reason: Mapped[str] = mapped_column(Text)
+    evidence: Mapped[dict] = mapped_column(JSON, default=dict)  # snapshot taken at escalation time
+    status: Mapped[str] = mapped_column(String(12), default="open", index=True)  # open | accepted | closed
+    resolution: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_by: Mapped[str] = mapped_column(String(80))
+    created_role: Mapped[str] = mapped_column(String(40))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)

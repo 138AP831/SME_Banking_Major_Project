@@ -7,7 +7,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from app.api import core, modules, portal, workflows
+from app.api import bank, core, modules, portal, workflows
 from app.config import get_settings
 from app.db import seed
 from app.services import workflow_runner
@@ -38,7 +38,7 @@ def create_app() -> FastAPI:
             return JSONResponse({"detail": "The SME Customer role can only use the SME portal."}, status_code=403)
         return await call_next(request)
 
-    for r in (core.router, workflows.router, modules.router, portal.router):
+    for r in (core.router, workflows.router, modules.router, portal.router, bank.router):
         app.include_router(r)
     return app
 
